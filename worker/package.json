@@ -1,0 +1,11 @@
+{
+  "name": "compose-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/worker.js"
+  },
+  "dependencies": {
+    "redis": "^5.8.2"
+  }
+}

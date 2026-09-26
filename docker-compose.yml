@@ -1,0 +1,197 @@
+services:
+
+  api:
+    build:
+      context: ./api
+      args:
+        APP_VERSION: "1.0.0"
+
+    container_name: compose-api
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      PORT: 3000
+      DB_PASSWORD_FILE: /run/secrets/db_password
+
+    secrets:
+      - db_password
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    networks:
+      - frontend
+      - backend
+
+    expose:
+      - "3000"
+
+    volumes:
+      - ./api/src:/app/src:ro
+
+    read_only: true
+
+    tmpfs:
+      - /tmp
+
+    user: "node"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+
+  db:
+    image: postgres:17-alpine
+
+    container_name: compose-db
+
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+
+    secrets:
+      - db_password
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+    networks:
+      - backend
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  redis:
+    image: redis:8-alpine
+
+    container_name: compose-redis
+
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes"
+      ]
+
+    volumes:
+      - redis_data:/data
+
+    networks:
+      - backend
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+  worker:
+    build:
+      context: ./worker
+
+    container_name: compose-worker
+
+    restart: unless-stopped
+
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    networks:
+      - backend
+
+    profiles:
+      - worker
+
+
+  nginx:
+    image: nginx:alpine
+
+    container_name: compose-nginx
+
+    restart: unless-stopped
+
+    ports:
+      - "8080:80"
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    networks:
+      - frontend
+
+    read_only: true
+
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+
+
+networks:
+
+  frontend:
+    driver: bridge
+
+  backend:
+    driver: bridge
+    internal: true
+
+
+volumes:
+
+  postgres_data:
+    driver: local
+
+  redis_data:
+    driver: local
+
+
+secrets:
+
+  db_password:
+    file: ./secrets/db_password.txt
